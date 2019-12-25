@@ -1,23 +1,17 @@
-import { GraphQLSchema, parse, DocumentNode, Source as GraphQLSource } from 'graphql';
-import { Source, asArray, isDocumentString, debugLog, fixWindowsPath, Loader, printSchemaWithDirectives, fixSchemaAst } from '@graphql-toolkit/common';
-import { filterKind } from './filter-document-kind';
+import { Source as GraphQLSource, GraphQLSchema, parse, Kind } from 'graphql';
+import { Source, asArray, isDocumentString, debugLog, fixWindowsPath, printSchemaWithDirectives, parseGraphQLSDL, fixSchemaAst, SingleFileOptions } from '@graphql-toolkit/common';
 import { join } from 'path';
 import isGlob from 'is-glob';
 import globby from 'globby';
-import { processImportSyntax } from './import-parser';
+import { filterKind } from './filter-document-kind';
+import { parseSDL, isEmptySDL, filterImportedDefinitions, resolveModuleFilePath } from './import-parser';
 
-export type SingleFileOptions<ExtraConfig = { [key: string]: any }> = ExtraConfig & {
-  noRequire?: boolean;
-  skipGraphQLImport?: boolean;
-  forceRawSDL?: boolean;
-  forceGraphQLImport?: boolean;
-  mergeableTypes?: [string];
-};
-
-export type LoadTypedefsOptions<ExtraConfig = { [key: string]: any }> = SingleFileOptions<ExtraConfig> & {
-  ignore?: string | string[];
-  schemas?: { [key: string]: string | DocumentNode | GraphQLSchema };
-};
+export type LoadTypedefsOptions<ExtraConfig = { [key: string]: any }> = SingleFileOptions &
+  ExtraConfig & {
+    ignore?: string | string[];
+    preresolvedTypeDefs?: { [key: string]: string };
+    sort?: boolean;
+  };
 
 export type UnnormalizedTypeDefPointer = { [key: string]: any } | string;
 
@@ -68,76 +62,33 @@ function stringToHash(str: string) {
   return hash;
 }
 
-export async function loadTypedefsUsingLoaders<AdditionalConfig = {}>(
-  loaders: Loader[],
-  pointerOrPointers: UnnormalizedTypeDefPointer | UnnormalizedTypeDefPointer[],
-  options: LoadTypedefsOptions<Partial<AdditionalConfig>> = {},
-  filterKinds: string[] = [],
-  cwd = process.cwd()
-): Promise<Source[]> {
+export async function loadTypedefs<AdditionalConfig = {}>(pointerOrPointers: UnnormalizedTypeDefPointer | UnnormalizedTypeDefPointer[], options: LoadTypedefsOptions<Partial<AdditionalConfig>>): Promise<Source[]> {
   const normalizedPointerOptionsMap = normalizePointers(pointerOrPointers);
   const loadPromises$: Promise<any>[] = [];
   const found: Source[] = [];
   const foundGlobs: string[] = [];
   const globOptions: any = {};
 
+  options.cache = options.cache || {};
+  options.cwd = options.cwd || process.cwd();
+  options.sort = 'sort' in options ? options.sort : true;
+
   for (const pointer in normalizedPointerOptionsMap) {
     const pointerOptions = normalizedPointerOptionsMap[pointer];
-    if (options && options.schemas && pointer in options.schemas) {
-      const content = options.schemas[pointer];
-      if (typeof content === 'string') {
-        const rawSDL = content as string;
-        let unfilteredDocument: DocumentNode;
-        if (options.forceGraphQLImport || (!options.skipGraphQLImport && /^\#.*import /i.test(rawSDL.trimLeft()))) {
-          unfilteredDocument = await processImportSyntax(pointer, rawSDL, loaders, options, cwd);
-        } else {
-          unfilteredDocument = parse(new GraphQLSource(rawSDL, pointer));
-        }
-        const document = filterKind(unfilteredDocument, filterKinds);
-        if (options.forceRawSDL || (document && document.definitions && document.definitions.length > 0)) {
-          found.push({
-            location: pointer,
-            document,
-            rawSDL,
-          });
-        }
-      } else if (content instanceof GraphQLSchema) {
-        const schema = content as GraphQLSchema;
-        found.push({
-          location: pointer,
-          get document() {
-            return parse(new GraphQLSource(printSchemaWithDirectives(schema), pointer));
-          },
-          schema,
-        });
-      } else {
-        let document = content as DocumentNode;
-        document = filterKind(document, filterKinds);
-        if (document && document.definitions && document.definitions.length > 0) {
-          found.push({
-            location: pointer,
-            document,
-          });
-        }
-      }
+    if (options.preresolvedTypeDefs && pointer in options.preresolvedTypeDefs) {
+      loadPromises$.push(
+        Promise.resolve().then(async () => {
+          const result = parseGraphQLSDL(pointer, options.preresolvedTypeDefs[pointer], options);
+          found.push(result);
+          options.cache[pointer] = result;
+        })
+      );
     } else if (isDocumentString(pointer)) {
       loadPromises$.push(
         Promise.resolve().then(async () => {
-          let rawSDL = pointer;
-          let content: DocumentNode;
-          if (options.forceGraphQLImport || (!options.skipGraphQLImport && /^\#.*import /i.test(rawSDL.trimLeft()))) {
-            content = await processImportSyntax(pointer, rawSDL, loaders, options, cwd);
-          } else {
-            content = parse(new GraphQLSource(rawSDL, pointer));
-          }
-          content = filterKind(content, filterKinds);
-          if (options.forceRawSDL || (content && content.definitions && content.definitions.length > 0)) {
-            found.push({
-              location: stringToHash(pointer) + '.graphql',
-              document: content,
-              rawSDL: pointer,
-            });
-          }
+          const result = parseGraphQLSDL(`${stringToHash(pointer)}.graphql`, pointer, options);
+          found.push(result);
+          options.cache[pointer] = result;
         })
       );
     } else if (isGlob(pointer)) {
@@ -148,26 +99,33 @@ export async function loadTypedefsUsingLoaders<AdditionalConfig = {}>(
         Promise.resolve().then(async () => {
           let loader;
           if (typeof pointerOptions.loader === 'string') {
-            loader = await getCustomLoaderByPath(pointerOptions.loader, cwd);
+            loader = await getCustomLoaderByPath(pointerOptions.loader, options.cwd);
           } else if (typeof pointerOptions.loader === 'function') {
             loader = pointerOptions.loader;
           }
           if (typeof loader !== 'function') {
             throw new Error(`Failed to load custom loader: ${pointerOptions.loader}`);
           }
-          let schema: GraphQLSchema;
-          let content = await loader(pointer, { ...options, ...pointerOptions }, normalizedPointerOptionsMap);
-          if (content && content instanceof GraphQLSchema) {
-            schema = fixSchemaAst(content, options as any);
-            content = parse(printSchemaWithDirectives(content));
-          }
-          content = filterKind(content, filterKinds);
-          if (content && content.definitions && content.definitions.length > 0) {
+          const customLoaderResult = await loader(pointer, { ...options, ...pointerOptions }, normalizedPointerOptionsMap);
+          if (customLoaderResult && customLoaderResult instanceof GraphQLSchema) {
             found.push({
               location: pointer,
-              document: content,
-              schema,
+              schema: customLoaderResult,
             });
+          } else if (customLoaderResult && customLoaderResult.kind && customLoaderResult.kind === Kind.DOCUMENT) {
+            const result = {
+              document: customLoaderResult,
+              location: pointer,
+            };
+            options.cache[pointer] = result;
+            found.push(result);
+          } else if (customLoaderResult && customLoaderResult.document) {
+            const result = {
+              location: pointer,
+              ...customLoaderResult,
+            };
+            options.cache[pointer] = result;
+            found.push(result);
           }
         })
       );
@@ -178,25 +136,9 @@ export async function loadTypedefsUsingLoaders<AdditionalConfig = {}>(
             ...options,
             ...pointerOptions,
           };
-          let loaded = await loadSingleFile(loaders, pointer, combinedOptions);
-          if (loaded) {
-            let unfilteredDocument: DocumentNode;
-            const rawSDL = loaded.rawSDL;
-            if (options.forceGraphQLImport || (rawSDL && !options.skipGraphQLImport && /^\#.*import /i.test(rawSDL.trimLeft()))) {
-              unfilteredDocument = await processImportSyntax(pointer, rawSDL, loaders, options, cwd);
-            } else {
-              unfilteredDocument = loaded.document;
-            }
-            const filteredDocument = filterKind(unfilteredDocument, filterKinds);
-            if (options.forceRawSDL || (filteredDocument && filteredDocument.definitions && filteredDocument.definitions.length > 0)) {
-              found.push({
-                location: pointer,
-                document: filteredDocument,
-                schema: loaded.schema && fixSchemaAst(loaded.schema, combinedOptions),
-                rawSDL: loaded.rawSDL,
-              });
-            }
-          }
+          const loaderResult = await loadSingleFile(pointer, combinedOptions);
+          options.cache[pointer] = loaderResult;
+          found.push(loaderResult);
         })
       );
     }
@@ -215,46 +157,48 @@ export async function loadTypedefsUsingLoaders<AdditionalConfig = {}>(
 
     loadPromises$.push(
       Promise.resolve().then(async () => {
-        const paths = await globby(foundGlobs, { cwd, absolute: true });
+        const paths = await globby(foundGlobs, { absolute: true, ...options, ignore: [] });
         await Promise.all(
           paths.map(async path => {
             if (!path.endsWith('.d.ts') && !path.endsWith('.spec.ts') && !path.endsWith('.spec.js') && !path.endsWith('.test.ts') && !path.endsWith('.test.js')) {
-              let content, schema, rawSDL;
               if (globOptions.loader) {
                 let loader;
                 if (typeof globOptions.loader === 'string') {
-                  loader = await getCustomLoaderByPath(globOptions.loader, cwd);
+                  loader = await getCustomLoaderByPath(globOptions.loader, options.cwd);
                 } else if (typeof globOptions.loader === 'function') {
                   loader = globOptions.loader;
                 }
                 if (typeof loader !== 'function') {
                   throw new Error(`Failed to load custom loader: ${globOptions.loader}`);
                 }
-                content = await loader(path, { ...options, ...globOptions }, normalizedPointerOptionsMap);
-                if (content && content instanceof GraphQLSchema) {
-                  schema = content;
-                  content = parse(printSchemaWithDirectives(content));
+                const customLoaderResult = await loader(path, { ...options, ...globOptions }, normalizedPointerOptionsMap);
+                if (customLoaderResult instanceof GraphQLSchema) {
+                  const result = {
+                    schema: customLoaderResult,
+                    document: parse(printSchemaWithDirectives(customLoaderResult)),
+                    location: path,
+                  };
+                  options.cache[path] = result;
+                  found.push(result);
+                } else if (customLoaderResult && customLoaderResult.kind && customLoaderResult.kind === Kind.DOCUMENT) {
+                  const result = {
+                    document: customLoaderResult,
+                    location: path,
+                  };
+                  options.cache[path] = result;
+                  found.push(result);
+                } else if (customLoaderResult && customLoaderResult.document) {
+                  const result = {
+                    location: path,
+                    ...customLoaderResult,
+                  };
+                  options.cache[path] = result;
+                  found.push(result);
                 }
               } else {
-                const loaded = await loadSingleFile(loaders, path, { ...options, ...globOptions });
-                if (loaded) {
-                  rawSDL = loaded.rawSDL;
-                  if (options.forceGraphQLImport || (rawSDL && !options.skipGraphQLImport && /^\#.*import /i.test(rawSDL.trimLeft()))) {
-                    content = await processImportSyntax(path, rawSDL, loaders, options, cwd);
-                  } else {
-                    content = loaded.document;
-                  }
-                }
-              }
-              content = filterKind(content, filterKinds);
-
-              if (options.forceRawSDL || (content && content.definitions && content.definitions.length > 0)) {
-                found.push({
-                  location: path,
-                  document: content,
-                  schema,
-                  rawSDL,
-                });
+                const loaderResult = await loadSingleFile(path, { ...options, ...globOptions });
+                options.cache[path] = loaderResult;
+                found.push(loaderResult);
               }
             }
           })
@@ -265,17 +209,66 @@ export async function loadTypedefsUsingLoaders<AdditionalConfig = {}>(
 
   await Promise.all(loadPromises$);
 
+  const importsLoadPromises: Promise<void>[] = [];
+
+  const foundValid: Source[] = [];
+
+  for (const partialSource of found) {
+    if (partialSource) {
+      const resultSource: Source = { ...partialSource };
+      if (resultSource.schema) {
+        resultSource.schema = fixSchemaAst(resultSource.schema, options as any);
+        resultSource.rawSDL = printSchemaWithDirectives(resultSource.schema);
+      }
+      if (resultSource.rawSDL) {
+        const imports = parseSDL(resultSource.rawSDL);
+        for (const i of imports) {
+          importsLoadPromises.push(
+            Promise.resolve().then(async () => {
+              const sources = await loadTypedefs(resolveModuleFilePath(resultSource.location, i.from), options);
+              for (const source of sources) {
+                foundValid.unshift({
+                  ...source,
+                  document: {
+                    ...source.document,
+                    definitions: filterImportedDefinitions(i.imports, source.document.definitions),
+                  },
+                });
+              }
+            })
+          );
+        }
+        if (!isEmptySDL(resultSource.rawSDL)) {
+          resultSource.document = parse(new GraphQLSource(resultSource.rawSDL, resultSource.location), options);
+        }
+      }
+      if (resultSource.document) {
+        if (options.filterKinds) {
+          resultSource.document = filterKind(resultSource.document, options.filterKinds);
+        }
+        if (resultSource.document.definitions && resultSource.document.definitions.length > 0) {
+          foundValid.push(resultSource);
+        }
+      }
+    }
+  }
+
+  await Promise.all(importsLoadPromises);
+
   const pointerList = Object.keys(normalizedPointerOptionsMap);
-  if (pointerList.length > 0 && found.length === 0) {
+  if (pointerList.length > 0 && foundValid.length === 0) {
     throw new Error(`Unable to find any GraphQL type definitions for the following pointers: ${pointerList.join(', ')}`);
   }
 
-  return found.sort((left, right) => left.location.localeCompare(right.location));
+  return options.sort ? foundValid.sort((left, right) => left.location.localeCompare(right.location)) : foundValid;
 }
 
-export async function loadSingleFile(loaders: Loader[], pointer: string, options: SingleFileOptions = {}): Promise<Source> {
+export async function loadSingleFile(pointer: string, options: SingleFileOptions): Promise<Source> {
+  if (pointer in options.cache) {
+    return options.cache[pointer];
+  }
   try {
-    for (const loader of loaders) {
+    for (const loader of options.loaders) {
       const canLoad = await loader.canLoad(pointer, options);
 
       if (canLoad) {

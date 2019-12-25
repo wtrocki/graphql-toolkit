@@ -1,7 +1,5 @@
-import { buildClientSchema, printSchema, parse, DocumentNode, Source as GraphQLSource, Kind, ParseOptions } from 'graphql';
-import { UniversalLoader, parseGraphQLSDL, parseGraphQLJSON } from '@graphql-toolkit/common';
+import { UniversalLoader, parseGraphQLSDL, parseGraphQLJSON, SingleFileOptions } from '@graphql-toolkit/common';
 import simplegit from 'simple-git/promise';
-import { GraphQLSchemaValidationOptions } from 'graphql/type/schema';
 
 // git:branch:path/to/file
 function extractData(
@@ -22,8 +20,6 @@ function extractData(
   };
 }
 
-export type GitLoaderOptions = ParseOptions & GraphQLSchemaValidationOptions;
-
 export class GitLoader implements UniversalLoader {
   loaderId() {
     return 'git-loader';
@@ -31,7 +27,7 @@ export class GitLoader implements UniversalLoader {
   async canLoad(pointer: string) {
     return typeof pointer === 'string' && pointer.toLowerCase().startsWith('git:');
   }
-  async load(pointer: string, options: GitLoaderOptions) {
+  async load(pointer: string, options: SingleFileOptions) {
     const { ref, path } = extractData(pointer);
     const git = simplegit();
 

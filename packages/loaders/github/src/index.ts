@@ -1,7 +1,5 @@
-import { buildClientSchema, printSchema, parse, DocumentNode, ParseOptions } from 'graphql';
-import { UniversalLoader, parseGraphQLSDL, parseGraphQLJSON } from '@graphql-toolkit/common';
+import { UniversalLoader, parseGraphQLSDL, parseGraphQLJSON, SingleFileOptions } from '@graphql-toolkit/common';
 import { fetch } from 'cross-fetch';
-import { GraphQLSchemaValidationOptions } from 'graphql/type/schema';
 
 // github:owner/name#ref:path/to/file
 function extractData(
@@ -24,7 +22,7 @@ function extractData(
   };
 }
 
-export interface GithubLoaderOptions extends ParseOptions, GraphQLSchemaValidationOptions {
+export interface GithubLoaderOptions extends SingleFileOptions {
   token: string;
 }
 
