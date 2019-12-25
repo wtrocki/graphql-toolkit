@@ -15,8 +15,32 @@ function stripBOM(content: string): string {
   return content;
 }
 
-function parseBOM(content: string): IntrospectionQuery {
+function parseBOM(content: string): any {
   return JSON.parse(stripBOM(content));
+}
+
+export function parseGraphQLJSON(pointer: string, jsonContent: string): Source {
+  let parsedJson = parseBOM(jsonContent);
+
+  if (parsedJson['data']) {
+    parsedJson = parsedJson['data'];
+  }
+
+  if (parsedJson.kind === 'Document') {
+    const document = parsedJson;
+    return {
+      location: pointer,
+      document,
+    };
+  } else if (parsedJson.__schema) {
+    const schema = buildClientSchema(parsedJson, options as any);
+    return {
+      location: pointer,
+      document: parse(printSchemaWithDirectives(schema)),
+      schema,
+    };
+  }
+  throw new Error(`Not valid content`);
 }
 
 export interface JsonFileLoaderOptions {
@@ -43,42 +67,13 @@ export class JsonFileLoader implements DocumentLoader {
   }
 
   async load(pointer: SchemaPointerSingle, options: JsonFileLoaderOptions): Promise<Source> {
-    return new Promise<Source>((resolve, reject) => {
-      const normalizedFilepath = isAbsolute(pointer) ? pointer : resolvePath(options.cwd || process.cwd(), pointer);
+    const normalizedFilepath = isAbsolute(pointer) ? pointer : resolvePath(options.cwd || process.cwd(), pointer);
 
-      if (existsSync(normalizedFilepath)) {
-        try {
-          const fileContent = readFileSync(normalizedFilepath, 'utf8');
-
-          if (!fileContent) {
-            reject(`Unable to read local introspection file: ${normalizedFilepath}`);
-          }
-
-          let introspection = parseBOM(fileContent);
-
-          if (introspection['data']) {
-            introspection = introspection['data'] as IntrospectionQuery;
-          }
-
-          if (!introspection.__schema) {
-            throw new Error('Invalid schema provided!');
-          }
-
-          const schema = buildClientSchema(introspection, options as any);
-
-          resolve({
-            location: pointer,
-            get document() {
-              return parse(printSchemaWithDirectives(schema));
-            },
-            schema,
-          });
-        } catch (e) {
-          reject(e);
-        }
-      } else {
-        reject(`Unable to locate local introspection file: ${normalizedFilepath}`);
-      }
-    });
+    try {
+      const jsonContent = readFileSync(normalizedFilepath, 'utf8');
+      return parseGraphQLJSON(pointer, jsonContent);
+    } catch (e) {
+      throw new Error(`Unable to read JSON file: ${normalizedFilepath}`);
+    }
   }
 }

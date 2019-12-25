@@ -1,6 +1,7 @@
-import { buildClientSchema, printSchema, parse, DocumentNode } from 'graphql';
-import { UniversalLoader } from '@graphql-toolkit/common';
+import { buildClientSchema, printSchema, parse, DocumentNode, Source as GraphQLSource, Kind, ParseOptions } from 'graphql';
+import { UniversalLoader, parseGraphQLSDL, parseGraphQLJSON } from '@graphql-toolkit/common';
 import simplegit from 'simple-git/promise';
+import { GraphQLSchemaValidationOptions } from 'graphql/type/schema';
 
 // git:branch:path/to/file
 function extractData(
@@ -21,6 +22,8 @@ function extractData(
   };
 }
 
+export type GitLoaderOptions = ParseOptions & GraphQLSchemaValidationOptions;
+
 export class GitLoader implements UniversalLoader {
   loaderId() {
     return 'git-loader';
@@ -28,35 +31,26 @@ export class GitLoader implements UniversalLoader {
   async canLoad(pointer: string) {
     return typeof pointer === 'string' && pointer.toLowerCase().startsWith('git:');
   }
-  async load(pointer: string) {
+  async load(pointer: string, options: GitLoaderOptions) {
     const { ref, path } = extractData(pointer);
     const git = simplegit();
 
-    let schemaString: string;
+    let content: string;
 
     try {
-      schemaString = await git.show([`${ref}:${path}`]);
+      content = await git.show([`${ref}:${path}`]);
     } catch (error) {
       throw new Error('Unable to load schema from git: ' + error);
     }
 
-    let document: DocumentNode;
-
     if (/\.(gql|graphql)s?$/i.test(path)) {
-      document = parse(schemaString);
+      return parseGraphQLSDL(pointer, content, options);
     }
 
     if (/\.json$/i.test(path)) {
-      document = parse(printSchema(buildClientSchema(JSON.parse(schemaString))));
+      return parseGraphQLJSON(pointer, content, options);
     }
 
-    if (!document) {
-      throw new Error('Unable to build schema from git');
-    }
-
-    return {
-      location: pointer,
-      document,
-    };
+    throw new Error(`Invalid file extension: ${path}`);
   }
 }

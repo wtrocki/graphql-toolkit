@@ -7,8 +7,8 @@ import { LoadSchemaOptions } from '../schema';
 import { completeDefinitionPool, ValidDefinitionNode } from './definition';
 import { Loader } from '@graphql-toolkit/common';
 import { OPERATION_KINDS } from '../documents';
+import { resolve, dirname, join } from 'path';
 import { realpathSync } from 'fs';
-import { join, dirname, resolve } from 'path';
 
 /**
  * Describes the information from a single import line
@@ -156,7 +156,26 @@ function resolveModuleFilePath(filePath: string, importFrom: string): string {
       return realpathSync(join(dirName, importFrom));
     } catch (e) {
       if (e.code === 'ENOENT') {
-        return resolveFrom(dirName, importFrom);
+        const addedExtensions = new Array<string>();
+        for (const graphqlFileExtension of ['.gql', '.gqls', '.graphql', '.graphqls']) {
+          if (!(graphqlFileExtension in require.extensions)) {
+            require.extensions[graphqlFileExtension] = () => ({});
+            addedExtensions.push(graphqlFileExtension);
+          }
+        }
+        function cleanRequireExtensions() {
+          for (const extension of addedExtensions) {
+            delete require.extensions[extension];
+          }
+        }
+        try {
+          const resolvedPath = resolveFrom(dirName, importFrom);
+          cleanRequireExtensions();
+          return resolvedPath;
+        } catch (e) {
+          cleanRequireExtensions();
+          throw e;
+        }
       }
     }
   }

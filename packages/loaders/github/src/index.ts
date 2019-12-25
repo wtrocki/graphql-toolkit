@@ -1,6 +1,7 @@
-import { buildClientSchema, printSchema, parse, DocumentNode } from 'graphql';
-import { UniversalLoader } from '@graphql-toolkit/common';
+import { buildClientSchema, printSchema, parse, DocumentNode, ParseOptions } from 'graphql';
+import { UniversalLoader, parseGraphQLSDL, parseGraphQLJSON } from '@graphql-toolkit/common';
 import { fetch } from 'cross-fetch';
+import { GraphQLSchemaValidationOptions } from 'graphql/type/schema';
 
 // github:owner/name#ref:path/to/file
 function extractData(
@@ -23,7 +24,7 @@ function extractData(
   };
 }
 
-export interface GithubLoaderOptions {
+export interface GithubLoaderOptions extends ParseOptions, GraphQLSchemaValidationOptions {
   token: string;
 }
 
@@ -76,25 +77,16 @@ export class GithubLoader implements UniversalLoader<GithubLoaderOptions> {
       throw new Error('Unable to download schema from github: ' + errorMessage);
     }
 
-    const schemaString = response.data.repository.object.text;
-
-    let document: DocumentNode;
+    const content = response.data.repository.object.text;
 
     if (/\.(gql|graphql)s?$/i.test(path)) {
-      document = parse(schemaString);
+      return parseGraphQLSDL(pointer, content, options);
     }
 
     if (/\.json$/i.test(path)) {
-      document = parse(printSchema(buildClientSchema(JSON.parse(schemaString))));
+      return parseGraphQLJSON(pointer, content, options);
     }
 
-    if (!document) {
-      throw new Error('Unable to build schema from GitHub');
-    }
-
-    return {
-      location: pointer,
-      document,
-    };
+    throw new Error(`Invalid file extension: ${path}`);
   }
 }
