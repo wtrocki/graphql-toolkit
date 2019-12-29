@@ -70,8 +70,6 @@ export function parseSDL(sdl: string): RawModule[] {
  * @returns Single bundled schema with all imported types
  */
 export async function processImportSyntax(documentSource: Source, options: LoadSchemaOptions): Promise<void> {
-  const mergeableTypes = options.mergeableTypes || [];
-  const allMergeableTypes = [...mergeableTypes, ...rootFields];
   let document = documentSource.document;
 
   // Recursively process the imports, starting by importing all types from the initial schema
@@ -81,24 +79,25 @@ export async function processImportSyntax(documentSource: Source, options: LoadS
   // Query, Mutation and Subscription should be merged
   // And should always be in the first set, to make sure they
   // are not filtered out.
-  const firstTypes = options.typeDefinitions.flat().filter(d => allMergeableTypes.includes(d.name.value));
-  const secondFirstTypes = options.typeDefinitions[0].filter(d => !allMergeableTypes.includes(d.name.value));
-  const otherFirstTypes = options.typeDefinitions
-    .slice(1)
-    .flat()
-    .filter(d => !allMergeableTypes.includes(d.name.value));
+  const firstTypes = options.typeDefinitions.flat();
+  const secondFirstTypes = options.typeDefinitions[0];
+  const otherFirstTypes = options.typeDefinitions.slice(1).flat();
 
   const firstSet = firstTypes.concat(secondFirstTypes, otherFirstTypes);
   const processedTypeNames: string[] = [];
   const mergedFirstTypes = [];
   for (const type of firstSet) {
-    if (!processedTypeNames.includes(type.name.value)) {
-      processedTypeNames.push(type.name.value);
-      mergedFirstTypes.push(type);
-    } else {
-      const existingType = mergedFirstTypes.find(t => t.name.value === type.name.value) as any;
+    if ('name' in type) {
+      if (!processedTypeNames.includes(type.name.value)) {
+        processedTypeNames.push(type.name.value);
+        mergedFirstTypes.push(type);
+      } else {
+        const existingType = mergedFirstTypes.find(t => t.name.value === type.name.value);
 
-      existingType.fields = uniqBy(existingType.fields.concat((type as ObjectTypeDefinitionNode).fields), 'name.value');
+        if ('fields' in existingType) {
+          (existingType as any).fields = uniqBy((existingType.fields as any).concat((type as ObjectTypeDefinitionNode).fields), 'name.value');
+        }
+      }
     }
   }
 
@@ -226,21 +225,21 @@ function filterImportedDefinitions(imports: string[], typeDefinitions: ReadonlyA
         allDefinitions
           .slice(0, allDefinitions.length - 1)
           .flat()
-          .filter(def => !rootFields.includes(def.name.value)),
-        def => def.name.value
+          .filter(def => 'name' in def && !rootFields.includes(def.name.value)),
+        def => 'name' in def && def.name.value
       );
       return typeDefinitions.filter(typeDef => typeDef.kind === 'ObjectTypeDefinition' && previousTypeDefinitions[typeDef.name.value]) as ObjectTypeDefinitionNode[];
     }
     return filteredDefinitions;
   } else {
     const importedTypes = imports.map(i => i.split('.')[0]);
-    const result = filteredDefinitions.filter(d => importedTypes.includes(d.name.value));
+    const result = filteredDefinitions.filter(d => 'name' in d && importedTypes.includes(d.name.value));
     const fieldImports = imports.filter(i => i.split('.').length > 1);
     const groupedFieldImports = groupBy(fieldImports, x => x.split('.')[0]);
 
     for (const rootType in groupedFieldImports) {
       const fields = groupedFieldImports[rootType].map(x => x.split('.')[1]);
-      const objectTypeDefinition: any = filteredDefinitions.find(def => def.name.value === rootType);
+      const objectTypeDefinition: any = filteredDefinitions.find(def => 'name' in def && def.name.value === rootType);
 
       if (objectTypeDefinition && 'fields' in objectTypeDefinition && !fields.includes('*')) {
         objectTypeDefinition.fields = objectTypeDefinition.fields.filter((f: any) => fields.includes(f.name.value) || fields.includes('*'));
@@ -260,4 +259,4 @@ function filterImportedDefinitions(imports: string[], typeDefinitions: ReadonlyA
 export function filterTypeDefinitions(definitions: ReadonlyArray<DefinitionNode>): ValidDefinitionNode[] {
   return definitions.filter(d => validKinds.includes(d.kind)).map(d => d as ValidDefinitionNode);
 }
-const validKinds = ['DirectiveDefinition', 'ScalarTypeDefinition', 'ObjectTypeDefinition', 'ObjectTypeExtension', 'InterfaceTypeDefinition', 'EnumTypeDefinition', 'UnionTypeDefinition', 'InputObjectTypeDefinition'];
+const validKinds = ['DirectiveDefinition', 'ScalarTypeDefinition', 'ObjectTypeDefinition', 'ObjectTypeExtension', 'InterfaceTypeDefinition', 'EnumTypeDefinition', 'UnionTypeDefinition', 'InputObjectTypeDefinition', 'SchemaDefinition'];

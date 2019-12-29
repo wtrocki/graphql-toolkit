@@ -67,10 +67,6 @@ export function printComment(comment: string): string {
   return '\n# ' + comment.replace(/\n/g, '\n # ');
 }
 
-export function printWithComments(doc: DocumentNode): string {
-  return print(doc);
-}
-
 /**
  * Copyright (c) 2015-present, Facebook, Inc.
  *

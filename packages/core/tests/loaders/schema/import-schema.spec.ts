@@ -10,18 +10,18 @@ import { parseGraphQLSDL } from '@graphql-toolkit/common';
 import { mergeTypeDefs } from '@graphql-toolkit/schema-merging';
 
 const importSchema = (
-  schema: string, schemas?: { [name: string]: string }, options?: LoadTypedefsOptions
+  schema: string, schemas?: { [name: string]: string }, options?: LoadTypedefsOptions & Parameters<typeof mergeTypeDefs>[1]
 ) =>
   loadTypedefs(
     schema, {
     loaders: [new UrlLoader(), new JsonFileLoader(), new GraphQLFileLoader(), new CodeFileLoader()],
     filterKinds: OPERATION_KINDS,
-    cache: schemas ? Object.keys(schemas).reduce((prev, location) => Object.assign(prev, { [location]: parseGraphQLSDL(location, schemas[location], options)}), {}) : {},
+    cache: schemas ? Object.keys(schemas).reduce((prev, location) => Object.assign(prev, { [location]: parseGraphQLSDL(location, schemas[location], options) }), {}) : {},
     sort: false,
     forceGraphQLImport: true,
     cwd: __dirname,
     ...options,
-  }).then(r => print(mergeTypeDefs(r.map(r => r.document), { useSchemaDefinition: false })));
+  }).then(r => print(mergeTypeDefs(r.map(r => r.document), { useSchemaDefinition: false, ...options })));
 
 test('parseImportLine: parse single import', () => {
   expect(parseImportLine(`import A from "schema.graphql"`)).toEqual({
@@ -671,7 +671,7 @@ test('importSchema: complex test', async () => {
   try {
     const a = await importSchema('./fixtures/complex/a.graphql')
     expect(a).toBeTruthy();
-  } catch(e) {
+  } catch (e) {
     expect(e).toBeFalsy();
   }
 })
@@ -849,7 +849,7 @@ test('global schema modules', async () => {
           first: String
         }
         `
-  expect(normalizeDocumentString(await importSchema('./fixtures/global/a.graphql', { shared } ))).toBe(normalizeDocumentString(expectedSDL))
+  expect(normalizeDocumentString(await importSchema('./fixtures/global/a.graphql', { shared }))).toBe(normalizeDocumentString(expectedSDL))
 })
 
 test('missing type on type', async () => {
@@ -939,10 +939,10 @@ test('import with collision', async () => {
 })
 
 function normalizeDocumentString(doc: any): string {
-  if(typeof doc === 'string') {
-    doc = parse(doc.replace(/\s+/g, ' ').trim(), {noLocation: true});
+  if (typeof doc === 'string') {
+    doc = parse(doc.replace(/\s+/g, ' ').trim(), { noLocation: true });
   }
-  doc.definitions = doc.definitions.sort((a,b) => {
+  doc.definitions = doc.definitions.sort((a, b) => {
     const aStr = 'name' in a ? a.name.value : a.kind;
     const bStr = 'name' in b ? b.name.value : b.kind;
     return aStr.localeCompare(bStr);
@@ -971,4 +971,36 @@ test('merged custom root fields imports', async () => {
           `);
   const actualSDL = await importSchema('./fixtures/merged-root-fields/a.graphql')
   expect(normalizeDocumentString(actualSDL)).toBe(normalizeDocumentString(expectedSDL))
+})
+
+test('respect schema definition', async () => {
+  const expectedSDL = normalizeDocumentString(`\
+    schema {
+      query: MyQuery
+      mutation: MyMutation
+    }
+
+    type MyQuery {
+      b: String
+    }
+
+    type MyMutation {
+      c: String
+    }
+  `);
+  const actualSDL = await importSchema('./fixtures/schema-definition/a.graphql')
+  expect(normalizeDocumentString(actualSDL)).toBe(normalizeDocumentString(expectedSDL));
+});
+
+test('import schema with shadowed type', async () => {
+  const expectedSDL = `\
+    type Query {
+      b: B!
+    }
+    type B {
+      x: X
+    }
+    scalar X
+`
+  expect(normalizeDocumentString(await importSchema('fixtures/import-shadowed/a.graphql'))).toBe(normalizeDocumentString(expectedSDL))
 })
