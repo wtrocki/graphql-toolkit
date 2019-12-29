@@ -1,16 +1,25 @@
-import { Source as GraphQLSource, GraphQLSchema, parse, Kind } from 'graphql';
-import { Source, asArray, isDocumentString, debugLog, fixWindowsPath, printSchemaWithDirectives, parseGraphQLSDL, fixSchemaAst, SingleFileOptions } from '@graphql-toolkit/common';
+import { GraphQLSchema, parse, Kind, Source as GraphQLSource, print } from 'graphql';
+import { Source, asArray, isDocumentString, debugLog, fixWindowsPath, printSchemaWithDirectives, parseGraphQLSDL, fixSchemaAst, SingleFileOptions, Loader } from '@graphql-toolkit/common';
 import { join } from 'path';
 import isGlob from 'is-glob';
 import globby from 'globby';
 import { filterKind } from './filter-document-kind';
-import { parseSDL, isEmptySDL, filterImportedDefinitions, resolveModuleFilePath } from './import-parser';
+import { RawModule, processImportSyntax, isEmptySDL } from './import-parser';
+import { ValidDefinitionNode } from './import-parser/definition';
 
 export type LoadTypedefsOptions<ExtraConfig = { [key: string]: any }> = SingleFileOptions &
   ExtraConfig & {
+    processedFiles?: Map<string, RawModule[]>;
+    typeDefinitions?: ValidDefinitionNode[][];
+    allDefinitions?: ValidDefinitionNode[][];
+    cache?: { [key: string]: Source };
+    loaders: Loader[];
+    filterKinds?: string[];
     ignore?: string | string[];
     preresolvedTypeDefs?: { [key: string]: string };
     sort?: boolean;
+    skipGraphQLImport?: boolean;
+    forceGraphQLImport?: boolean;
   };
 
 export type UnnormalizedTypeDefPointer = { [key: string]: any } | string;
@@ -72,18 +81,13 @@ export async function loadTypedefs<AdditionalConfig = {}>(pointerOrPointers: Unn
   options.cache = options.cache || {};
   options.cwd = options.cwd || process.cwd();
   options.sort = 'sort' in options ? options.sort : true;
+  options.processedFiles = options.processedFiles || new Map();
+  options.allDefinitions = options.allDefinitions || [];
+  options.typeDefinitions = options.typeDefinitions || [];
 
   for (const pointer in normalizedPointerOptionsMap) {
     const pointerOptions = normalizedPointerOptionsMap[pointer];
-    if (options.preresolvedTypeDefs && pointer in options.preresolvedTypeDefs) {
-      loadPromises$.push(
-        Promise.resolve().then(async () => {
-          const result = parseGraphQLSDL(pointer, options.preresolvedTypeDefs[pointer], options);
-          found.push(result);
-          options.cache[pointer] = result;
-        })
-      );
-    } else if (isDocumentString(pointer)) {
+    if (isDocumentString(pointer)) {
       loadPromises$.push(
         Promise.resolve().then(async () => {
           const result = parseGraphQLSDL(`${stringToHash(pointer)}.graphql`, pointer, options);
@@ -209,51 +213,43 @@ export async function loadTypedefs<AdditionalConfig = {}>(pointerOrPointers: Unn
 
   await Promise.all(loadPromises$);
 
-  const importsLoadPromises: Promise<void>[] = [];
-
   const foundValid: Source[] = [];
 
-  for (const partialSource of found) {
-    if (partialSource) {
-      const resultSource: Source = { ...partialSource };
-      if (resultSource.schema) {
-        resultSource.schema = fixSchemaAst(resultSource.schema, options as any);
-        resultSource.rawSDL = printSchemaWithDirectives(resultSource.schema);
-      }
-      if (resultSource.rawSDL) {
-        const imports = parseSDL(resultSource.rawSDL);
-        for (const i of imports) {
-          importsLoadPromises.push(
-            Promise.resolve().then(async () => {
-              const sources = await loadTypedefs(resolveModuleFilePath(resultSource.location, i.from), options);
-              for (const source of sources) {
-                foundValid.unshift({
-                  ...source,
-                  document: {
-                    ...source.document,
-                    definitions: filterImportedDefinitions(i.imports, source.document.definitions),
-                  },
-                });
-              }
-            })
-          );
+  await Promise.all(
+    found.map(async partialSource => {
+      if (partialSource) {
+        const resultSource: Source = { ...partialSource };
+        if (resultSource.schema) {
+          resultSource.schema = fixSchemaAst(resultSource.schema, options);
+          resultSource.rawSDL = printSchemaWithDirectives(resultSource.schema);
         }
-        if (!isEmptySDL(resultSource.rawSDL)) {
-          resultSource.document = parse(new GraphQLSource(resultSource.rawSDL, resultSource.location), options);
+        if (resultSource.rawSDL) {
+          if (isEmptySDL(resultSource.rawSDL)) {
+            resultSource.document = {
+              kind: Kind.DOCUMENT,
+              definitions: [],
+            };
+          } else {
+            resultSource.document = parse(new GraphQLSource(resultSource.rawSDL, resultSource.location), options);
+          }
         }
-      }
-      if (resultSource.document) {
-        if (options.filterKinds) {
-          resultSource.document = filterKind(resultSource.document, options.filterKinds);
-        }
-        if (resultSource.document.definitions && resultSource.document.definitions.length > 0) {
-          foundValid.push(resultSource);
+        if (resultSource.document) {
+          if (options.filterKinds) {
+            resultSource.document = filterKind(resultSource.document, options.filterKinds);
+          }
+          if (!resultSource.rawSDL) {
+            resultSource.rawSDL = print(resultSource.document);
+          }
+          if (options.forceGraphQLImport || (!options.skipGraphQLImport && /^\#.*import /i.test(resultSource.rawSDL.trimLeft()))) {
+            await processImportSyntax(resultSource, options);
+          }
+          if (resultSource.document.definitions && resultSource.document.definitions.length > 0) {
+            foundValid.push(resultSource);
+          }
         }
       }
-    }
-  }
-
-  await Promise.all(importsLoadPromises);
+    })
+  );
 
   const pointerList = Object.keys(normalizedPointerOptionsMap);
   if (pointerList.length > 0 && foundValid.length === 0) {
@@ -263,9 +259,12 @@ export async function loadTypedefs<AdditionalConfig = {}>(pointerOrPointers: Unn
   return options.sort ? foundValid.sort((left, right) => left.location.localeCompare(right.location)) : foundValid;
 }
 
-export async function loadSingleFile(pointer: string, options: SingleFileOptions): Promise<Source> {
+export async function loadSingleFile(pointer: string, options: LoadTypedefsOptions): Promise<Source> {
   if (pointer in options.cache) {
     return options.cache[pointer];
+  }
+  if (options.preresolvedTypeDefs && pointer in options.preresolvedTypeDefs) {
+    return parseGraphQLSDL(pointer, options.preresolvedTypeDefs[pointer], options);
   }
   try {
     for (const loader of options.loaders) {

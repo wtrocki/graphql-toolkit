@@ -13,9 +13,6 @@ export type SingleFileOptions = ParseOptions &
   GraphQLSchemaValidationOptions &
   BuildSchemaOptions & {
     noRequire?: boolean;
-    cache?: { [key: string]: Source };
-    loaders: Loader[];
-    filterKinds?: string[];
     cwd?: string;
   };
 
