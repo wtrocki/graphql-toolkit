@@ -1002,5 +1002,5 @@ test('import schema with shadowed type', async () => {
     }
     scalar X
 `
-  expect(normalizeDocumentString(await importSchema('fixtures/import-shadowed/a.graphql'))).toBe(normalizeDocumentString(expectedSDL))
+  expect(normalizeDocumentString(await importSchema('./fixtures/import-shadowed/a.graphql'))).toBe(normalizeDocumentString(expectedSDL))
 })

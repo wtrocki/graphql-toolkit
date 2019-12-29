@@ -1,4 +1,4 @@
-import { GraphQLSchema, parse, Kind, Source as GraphQLSource, print } from 'graphql';
+import { GraphQLSchema, parse, Kind, Source as GraphQLSource } from 'graphql';
 import { Source, asArray, isDocumentString, debugLog, fixWindowsPath, printSchemaWithDirectives, parseGraphQLSDL, fixSchemaAst, SingleFileOptions, Loader } from '@graphql-toolkit/common';
 import { join } from 'path';
 import isGlob from 'is-glob';
@@ -6,6 +6,7 @@ import globby from 'globby';
 import { filterKind } from './filter-document-kind';
 import { RawModule, processImportSyntax, isEmptySDL } from './import-parser';
 import { ValidDefinitionNode } from './import-parser/definition';
+import { printWithComments } from '@graphql-toolkit/schema-merging';
 
 export type LoadTypedefsOptions<ExtraConfig = { [key: string]: any }> = SingleFileOptions &
   ExtraConfig & {
@@ -237,7 +238,7 @@ export async function loadTypedefs<AdditionalConfig = {}>(pointerOrPointers: Unn
             resultSource.document = filterKind(resultSource.document, options.filterKinds);
           }
           if (!resultSource.rawSDL) {
-            resultSource.rawSDL = print(resultSource.document);
+            resultSource.rawSDL = printWithComments(resultSource.document);
           }
           if (options.forceGraphQLImport || (!options.skipGraphQLImport && /^\#.*import /i.test(resultSource.rawSDL.trimLeft()))) {
             await processImportSyntax(resultSource, options);
