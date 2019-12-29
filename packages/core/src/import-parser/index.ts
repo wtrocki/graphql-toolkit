@@ -6,7 +6,7 @@ import { LoadSchemaOptions } from '../schema';
 
 import { completeDefinitionPool, ValidDefinitionNode } from './definition';
 import { realpathSync } from 'fs';
-import { join, dirname } from 'path';
+import { join, dirname, resolve } from 'path';
 import { Source } from '@graphql-toolkit/common';
 
 /**
@@ -194,7 +194,7 @@ export async function collectDefinitions(imports: string[], documentSource: Sour
   await Promise.all(
     rawModules.map(async m => {
       // If it was not yet processed (in case of circular dependencies)
-      const moduleFilePath = resolveModuleFilePath(documentSource.location, m.from);
+      const moduleFilePath = resolveModuleFilePath(resolve(options.cwd, documentSource.location), m.from);
 
       const processedFile = options.processedFiles.get(moduleFilePath);
       if (!processedFile || !processedFile.find(rModule => isEqual(rModule, m))) {

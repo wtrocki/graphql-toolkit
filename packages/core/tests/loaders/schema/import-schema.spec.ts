@@ -1,12 +1,13 @@
 import { parseImportLine, parseSDL, loadTypedefs, LoadTypedefsOptions, OPERATION_KINDS } from '@graphql-toolkit/core';
 import * as fs from 'fs'
-import { print, DocumentNode, Kind } from 'graphql';
+import { print } from 'graphql';
 import { JsonFileLoader } from '@graphql-toolkit/json-file-loader';
 import { UrlLoader } from '@graphql-toolkit/url-loader';
 import { CodeFileLoader } from '@graphql-toolkit/code-file-loader';
 import { GraphQLFileLoader } from '@graphql-toolkit/graphql-file-loader';
-import { mergeTypeDefs } from '@graphql-toolkit/schema-merging';
 import { parse } from 'graphql';
+import { parseGraphQLSDL } from '@graphql-toolkit/common';
+import { mergeTypeDefs } from '@graphql-toolkit/schema-merging';
 
 const importSchema = (
   schema: string, schemas?: { [name: string]: string }, options?: LoadTypedefsOptions
@@ -15,9 +16,10 @@ const importSchema = (
     schema, {
     loaders: [new UrlLoader(), new JsonFileLoader(), new GraphQLFileLoader(), new CodeFileLoader()],
     filterKinds: OPERATION_KINDS,
-    preresolvedTypeDefs: schemas,
+    cache: schemas ? Object.keys(schemas).reduce((prev, location) => Object.assign(prev, { [location]: parseGraphQLSDL(location, schemas[location], options)}), {}) : {},
     sort: false,
     forceGraphQLImport: true,
+    cwd: __dirname,
     ...options,
   }).then(r => print(mergeTypeDefs(r.map(r => r.document), { useSchemaDefinition: false })));
 
@@ -123,7 +125,7 @@ test('Module in node_modules', async () => {
 
   fs.writeFileSync(moduleDir + '/b.graphql', b)
   fs.writeFileSync(moduleDir + '/lower.graphql', lower)
-  expect(normalizeDocumentString(await importSchema('tests/loaders/schema/fixtures/import-module/a.graphql'))).toBe(normalizeDocumentString(expectedSDL))
+  expect(normalizeDocumentString(await importSchema('./fixtures/import-module/a.graphql'))).toBe(normalizeDocumentString(expectedSDL))
 })
 
 test('importSchema: imports only', async () => {
@@ -134,7 +136,7 @@ test('importSchema: imports only', async () => {
           third: String
         }
         `
-  expect(normalizeDocumentString(await importSchema('tests/loaders/schema/fixtures/imports-only/all.graphql'))).toBe(normalizeDocumentString(expectedSDL));
+  expect(normalizeDocumentString(await importSchema('./fixtures/imports-only/all.graphql'))).toBe(normalizeDocumentString(expectedSDL));
 })
 
 test('importSchema: import .gql extension', async () => {
@@ -143,7 +145,7 @@ test('importSchema: import .gql extension', async () => {
           id: ID!
         }
         `
-  expect(normalizeDocumentString(await importSchema('tests/loaders/schema/fixtures/import-gql/a.gql'))).toBe(normalizeDocumentString(expectedSDL))
+  expect(normalizeDocumentString(await importSchema('./fixtures/import-gql/a.gql'))).toBe(normalizeDocumentString(expectedSDL))
 })
 
 test('importSchema: import duplicate', async () => {
@@ -154,7 +156,7 @@ test('importSchema: import duplicate', async () => {
           third: String
         }
         `
-  expect(normalizeDocumentString(await importSchema('tests/loaders/schema/fixtures/import-duplicate/all.graphql'))).toBe(normalizeDocumentString(expectedSDL))
+  expect(normalizeDocumentString(await importSchema('./fixtures/import-duplicate/all.graphql'))).toBe(normalizeDocumentString(expectedSDL))
 })
 
 test('importSchema: import nested', async () => {
@@ -165,7 +167,7 @@ test('importSchema: import nested', async () => {
           third: String
         }
         `
-  expect(normalizeDocumentString(await importSchema('tests/loaders/schema/fixtures/import-nested/all.graphql'))).toBe(normalizeDocumentString(expectedSDL))
+  expect(normalizeDocumentString(await importSchema('./fixtures/import-nested/all.graphql'))).toBe(normalizeDocumentString(expectedSDL))
 })
 
 test('importSchema: field types', async () => {
@@ -185,7 +187,7 @@ test('importSchema: field types', async () => {
           id: ID!
         }
         `
-  expect(normalizeDocumentString(await importSchema('tests/loaders/schema/fixtures/field-types/a.graphql'))).toBe(normalizeDocumentString(expectedSDL))
+  expect(normalizeDocumentString(await importSchema('./fixtures/field-types/a.graphql'))).toBe(normalizeDocumentString(expectedSDL))
 })
 
 test('importSchema: enums', async () => {
@@ -202,7 +204,7 @@ test('importSchema: enums', async () => {
           B3
         }
         `
-  expect(normalizeDocumentString(await importSchema('tests/loaders/schema/fixtures/enums/a.graphql'))).toBe(normalizeDocumentString(expectedSDL))
+  expect(normalizeDocumentString(await importSchema('./fixtures/enums/a.graphql'))).toBe(normalizeDocumentString(expectedSDL))
 })
 
 test('importSchema: import all', async () => {
@@ -227,7 +229,7 @@ test('importSchema: import all', async () => {
           id: ID!
         }
         `
-  expect(normalizeDocumentString(await importSchema('tests/loaders/schema/fixtures/import-all/a.graphql'))).toBe(normalizeDocumentString(expectedSDL))
+  expect(normalizeDocumentString(await importSchema('./fixtures/import-all/a.graphql'))).toBe(normalizeDocumentString(expectedSDL))
 })
 
 test('importSchema: import all from objects', async () => {
@@ -312,7 +314,7 @@ test(`importSchema: single object schema`, async () => {
 
 test(`importSchema: import all mix 'n match`, async () => {
   const schemaB = `
-            # import C1, C2 from 'tests/loaders/schema/fixtures/import-all/c.graphql'
+            # import C1, C2 from './fixtures/import-all/c.graphql'
             type B {
               hello: String!
               c1: C1
@@ -361,7 +363,7 @@ test(`importSchema: import all mix 'n match`, async () => {
 
 test(`importSchema: import all mix 'n match 2`, async () => {
   const schemaA = `
-            # import * from "tests/loaders/schema/fixtures/import-all/b.graphql"
+            # import * from "./fixtures/import-all/b.graphql"
             type A {
               # test 1
               first: String
@@ -487,7 +489,7 @@ test('importSchema: scalar', async () => {
         
         scalar B
         `
-  expect(normalizeDocumentString(await importSchema('tests/loaders/schema/fixtures/scalar/a.graphql'))).toBe(normalizeDocumentString(expectedSDL))
+  expect(normalizeDocumentString(await importSchema('./fixtures/scalar/a.graphql'))).toBe(normalizeDocumentString(expectedSDL))
 })
 
 test('importSchema: directive', async () => {
@@ -503,7 +505,7 @@ test('importSchema: directive', async () => {
         
         directive @withB(argB: B) on FIELD_DEFINITION
         `
-  expect(normalizeDocumentString(await importSchema('tests/loaders/schema/fixtures/directive/a.graphql'))).toBe(normalizeDocumentString(expectedSDL))
+  expect(normalizeDocumentString(await importSchema('./fixtures/directive/a.graphql'))).toBe(normalizeDocumentString(expectedSDL))
 })
 
 test('importSchema: key directive', async () => {
@@ -515,7 +517,7 @@ test('importSchema: key directive', async () => {
           name: String
         }
         `
-  expect(normalizeDocumentString(await importSchema('tests/loaders/schema/fixtures/directive/c.graphql'))).toBe(normalizeDocumentString(expectedSDL))
+  expect(normalizeDocumentString(await importSchema('./fixtures/directive/c.graphql'))).toBe(normalizeDocumentString(expectedSDL))
 })
 
 test('importSchema: multiple key directive', async () => {
@@ -530,7 +532,7 @@ test('importSchema: multiple key directive', async () => {
           name: String
         }
         `
-  expect(normalizeDocumentString(await importSchema('tests/loaders/schema/fixtures/directive/e.graphql'))).toBe(normalizeDocumentString(expectedSDL))
+  expect(normalizeDocumentString(await importSchema('./fixtures/directive/e.graphql'))).toBe(normalizeDocumentString(expectedSDL))
 })
 
 test('importSchema: external directive', async () => {
@@ -544,7 +546,7 @@ test('importSchema: external directive', async () => {
           name: String @external
         }
         `
-  expect(normalizeDocumentString(await importSchema('tests/loaders/schema/fixtures/directive/f.graphql'))).toBe(normalizeDocumentString(expectedSDL))
+  expect(normalizeDocumentString(await importSchema('./fixtures/directive/f.graphql'))).toBe(normalizeDocumentString(expectedSDL))
 })
 
 test('importSchema: requires directive', async () => {
@@ -559,7 +561,7 @@ test('importSchema: requires directive', async () => {
           reviews: [Review] @requires(fields: "email")
         }
         `
-  expect(normalizeDocumentString(await importSchema('tests/loaders/schema/fixtures/directive/g.graphql'))).toBe(normalizeDocumentString(expectedSDL))
+  expect(normalizeDocumentString(await importSchema('./fixtures/directive/g.graphql'))).toBe(normalizeDocumentString(expectedSDL))
 })
 
 test('importSchema: interfaces', async () => {
@@ -578,7 +580,7 @@ test('importSchema: interfaces', async () => {
           c: ID!
         }
         `
-  expect(normalizeDocumentString(await importSchema('tests/loaders/schema/fixtures/interfaces/a.graphql'))).toBe(normalizeDocumentString(expectedSDL))
+  expect(normalizeDocumentString(await importSchema('./fixtures/interfaces/a.graphql'))).toBe(normalizeDocumentString(expectedSDL))
 })
 
 test('importSchema: interfaces-many', async () => {
@@ -605,7 +607,7 @@ test('importSchema: interfaces-many', async () => {
           d2: ID!
         }
         `
-  expect(normalizeDocumentString(await importSchema('tests/loaders/schema/fixtures/interfaces-many/a.graphql'))).toBe(normalizeDocumentString(expectedSDL))
+  expect(normalizeDocumentString(await importSchema('./fixtures/interfaces-many/a.graphql'))).toBe(normalizeDocumentString(expectedSDL))
 })
 
 test('importSchema: interfaces-implements', async () => {
@@ -622,7 +624,7 @@ test('importSchema: interfaces-implements', async () => {
           id: ID!
         }
         `
-  expect(normalizeDocumentString(await importSchema('tests/loaders/schema/fixtures/interfaces-implements/a.graphql'))).toBe(normalizeDocumentString(expectedSDL))
+  expect(normalizeDocumentString(await importSchema('./fixtures/interfaces-implements/a.graphql'))).toBe(normalizeDocumentString(expectedSDL))
 })
 
 test('importSchema: interfaces-implements-many', async () => {
@@ -643,7 +645,7 @@ test('importSchema: interfaces-implements-many', async () => {
           id: ID!
         }
         `
-  expect(normalizeDocumentString(await importSchema('tests/loaders/schema/fixtures/interfaces-implements-many/a.graphql'))
+  expect(normalizeDocumentString(await importSchema('./fixtures/interfaces-implements-many/a.graphql'))
   ).toBe(normalizeDocumentString(expectedSDL))
 })
 
@@ -662,12 +664,12 @@ test('importSchema: input types', async () => {
           id: ID!
         }
         `
-  expect(normalizeDocumentString(await importSchema('tests/loaders/schema/fixtures/input-types/a.graphql'))).toBe(normalizeDocumentString(expectedSDL))
+  expect(normalizeDocumentString(await importSchema('./fixtures/input-types/a.graphql'))).toBe(normalizeDocumentString(expectedSDL))
 })
 
 test('importSchema: complex test', async () => {
   try {
-    const a = await importSchema('tests/loaders/schema/fixtures/complex/a.graphql')
+    const a = await importSchema('./fixtures/complex/a.graphql')
     expect(a).toBeTruthy();
   } catch(e) {
     expect(e).toBeFalsy();
@@ -697,7 +699,7 @@ test('circular imports', async () => {
           a: A
         }
         `
-  const actualSDL = await importSchema('tests/loaders/schema/fixtures/circular/a.graphql')
+  const actualSDL = await importSchema('./fixtures/circular/a.graphql')
   expect(normalizeDocumentString(actualSDL)).toBe(normalizeDocumentString(expectedSDL))
 })
 
@@ -718,7 +720,7 @@ test('related types', async () => {
           field: String
         }
         `
-  const actualSDL = await importSchema('tests/loaders/schema/fixtures/related-types/a.graphql')
+  const actualSDL = await importSchema('./fixtures/related-types/a.graphql')
   expect(normalizeDocumentString(actualSDL)).toBe(normalizeDocumentString(expectedSDL))
 })
 
@@ -744,7 +746,7 @@ test('relative paths', async () => {
           id: ID!
         }
         `
-  const actualSDL = await importSchema('tests/loaders/schema/fixtures/relative-paths/src/schema.graphql')
+  const actualSDL = await importSchema('./fixtures/relative-paths/src/schema.graphql')
   expect(normalizeDocumentString(actualSDL)).toBe(normalizeDocumentString(expectedSDL))
 })
 
@@ -766,7 +768,7 @@ test('root field imports', async () => {
           field3: Int
         }
         `
-  const actualSDL = await importSchema('tests/loaders/schema/fixtures/root-fields/a.graphql')
+  const actualSDL = await importSchema('./fixtures/root-fields/a.graphql')
   expect(normalizeDocumentString(actualSDL)).toBe(normalizeDocumentString(expectedSDL))
 })
 
@@ -781,7 +783,7 @@ test('extend root field', async () => {
           name: String
         }
         `
-  const actualSDL = await importSchema('tests/loaders/schema/fixtures/root-fields/c.graphql')
+  const actualSDL = await importSchema('./fixtures/root-fields/c.graphql')
   expect(normalizeDocumentString(actualSDL)).toBe(normalizeDocumentString(expectedSDL))
 })
 
@@ -801,7 +803,7 @@ test('extend root field imports', async () => {
           name: String
         }
         `
-  const actualSDL = await importSchema('tests/loaders/schema/fixtures/root-fields/d.graphql')
+  const actualSDL = await importSchema('./fixtures/root-fields/d.graphql')
   expect(normalizeDocumentString(actualSDL)).toBe(normalizeDocumentString(expectedSDL))
 })
 
@@ -826,7 +828,7 @@ test('merged root field imports', async () => {
           field3: Int
         }
         `
-  const actualSDL = await importSchema('tests/loaders/schema/fixtures/merged-root-fields/a.graphql')
+  const actualSDL = await importSchema('./fixtures/merged-root-fields/a.graphql')
   expect(normalizeDocumentString(actualSDL)).toBe(normalizeDocumentString(expectedSDL))
 })
 
@@ -847,12 +849,12 @@ test('global schema modules', async () => {
           first: String
         }
         `
-  expect(normalizeDocumentString(await importSchema('tests/loaders/schema/fixtures/global/a.graphql', { shared } ))).toBe(normalizeDocumentString(expectedSDL))
+  expect(normalizeDocumentString(await importSchema('./fixtures/global/a.graphql', { shared } ))).toBe(normalizeDocumentString(expectedSDL))
 })
 
 test('missing type on type', async () => {
   try {
-    await importSchema('tests/loaders/schema/fixtures/type-not-found/a.graphql');
+    await importSchema('./fixtures/type-not-found/a.graphql');
     throw new Error();
   } catch (e) {
     expect(e.message).toBe(`Field test: Couldn't find type Post in any of the schemas.`);
@@ -862,7 +864,7 @@ test('missing type on type', async () => {
 
 test('missing type on interface', async () => {
   try {
-    await importSchema('tests/loaders/schema/fixtures/type-not-found/b.graphql');
+    await importSchema('./fixtures/type-not-found/b.graphql');
     throw new Error();
   } catch (e) {
     expect(e.message).toBe(`Field test: Couldn't find type Post in any of the schemas.`)
@@ -872,7 +874,7 @@ test('missing type on interface', async () => {
 
 test('missing type on input type', async () => {
   try {
-    await importSchema('tests/loaders/schema/fixtures/type-not-found/c.graphql');
+    await importSchema('./fixtures/type-not-found/c.graphql');
     throw new Error();
   } catch (e) {
     expect(e.message).toBe(`Field post: Couldn't find type Post in any of the schemas.`)
@@ -883,7 +885,7 @@ test('missing type on input type', async () => {
 test('missing interface type', async () => {
 
   try {
-    await importSchema('tests/loaders/schema/fixtures/type-not-found/d.graphql');
+    await importSchema('./fixtures/type-not-found/d.graphql');
     throw new Error();
   } catch (e) {
     expect(e.message).toBe(`Couldn't find interface MyInterface in any of the schemas.`)
@@ -894,7 +896,7 @@ test('missing interface type', async () => {
 test('missing union type', async () => {
 
   try {
-    await importSchema('tests/loaders/schema/fixtures/type-not-found/e.graphql')
+    await importSchema('./fixtures/type-not-found/e.graphql')
     throw new Error();
   } catch (e) {
     expect(e.message).toBe(`Couldn't find type C in any of the schemas.`)
@@ -905,7 +907,7 @@ test('missing union type', async () => {
 test('missing type on input type', async () => {
 
   try {
-    await importSchema('tests/loaders/schema/fixtures/type-not-found/f.graphql');
+    await importSchema('./fixtures/type-not-found/f.graphql');
     throw new Error();
   } catch (e) {
     expect(e.message).toBe(`Field myfield: Couldn't find type Post in any of the schemas.`)
@@ -916,7 +918,7 @@ test('missing type on input type', async () => {
 test('missing type on directive', async () => {
 
   try {
-    await importSchema('tests/loaders/schema/fixtures/type-not-found/g.graphql');
+    await importSchema('./fixtures/type-not-found/g.graphql');
     throw new Error();
   } catch (e) {
     expect(e.message).toBe(`Directive first: Couldn't find type first in any of the schemas.`)
@@ -933,7 +935,7 @@ test('import with collision', async () => {
           intro: String
         }
         `
-  expect(normalizeDocumentString(await importSchema('tests/loaders/schema/fixtures/collision/a.graphql'))).toBe(normalizeDocumentString(expectedSDL))
+  expect(normalizeDocumentString(await importSchema('./fixtures/collision/a.graphql'))).toBe(normalizeDocumentString(expectedSDL))
 })
 
 function normalizeDocumentString(doc: any): string {
@@ -967,6 +969,6 @@ test('merged custom root fields imports', async () => {
             field3: Int
           }
           `);
-  const actualSDL = await importSchema('tests/loaders/schema/fixtures/merged-root-fields/a.graphql')
+  const actualSDL = await importSchema('./fixtures/merged-root-fields/a.graphql')
   expect(normalizeDocumentString(actualSDL)).toBe(normalizeDocumentString(expectedSDL))
 })

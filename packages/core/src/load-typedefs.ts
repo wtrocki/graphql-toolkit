@@ -16,7 +16,6 @@ export type LoadTypedefsOptions<ExtraConfig = { [key: string]: any }> = SingleFi
     loaders: Loader[];
     filterKinds?: string[];
     ignore?: string | string[];
-    preresolvedTypeDefs?: { [key: string]: string };
     sort?: boolean;
     skipGraphQLImport?: boolean;
     forceGraphQLImport?: boolean;
@@ -262,9 +261,6 @@ export async function loadTypedefs<AdditionalConfig = {}>(pointerOrPointers: Unn
 export async function loadSingleFile(pointer: string, options: LoadTypedefsOptions): Promise<Source> {
   if (pointer in options.cache) {
     return options.cache[pointer];
-  }
-  if (options.preresolvedTypeDefs && pointer in options.preresolvedTypeDefs) {
-    return parseGraphQLSDL(pointer, options.preresolvedTypeDefs[pointer], options);
   }
   try {
     for (const loader of options.loaders) {
