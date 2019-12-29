@@ -145,7 +145,7 @@ function printBlockString(value: string, isDescription: boolean) {
  * Converts an AST into a string, using one set of reasonable
  * formatting rules.
  */
-function print(ast: ASTNode) {
+export function printWithComments(ast: ASTNode) {
   return visit(ast, {
     leave: {
       Name: node => node.value,
